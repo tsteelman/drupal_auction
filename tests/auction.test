@@ -1,0 +1,273 @@
+<?php
+
+/**
+ * May 20, 2012
+ * @file auction.test
+ * @author blazey http://drupal.org/user/353861
+ */
+
+/**
+* Administration tests for my auctions.
+*/
+class AuctionBaseTestCase extends DrupalWebTestCase {
+
+  protected function create_administrator() {
+    $permissions = array(
+      'administer auctions',
+      'create auctions',
+      'create auction content',
+      'edit any auction content',
+      'delete any auction content',
+      'view bids'
+    );
+    $account = $this->drupalCreateUser($permissions);
+    return $account;
+  }
+
+  protected function create_auction_creator() {
+    $permissions = array(
+      'create auctions',
+      'create auction content',
+      'edit own auction content',
+      'delete own auction content',
+    );
+    $account = $this->drupalCreateUser($permissions);
+    return $account;
+  }
+
+  protected function create_customer() {
+    $permissions = array('bid in auctions', 'view auctions', 'view bids');
+    $account = $this->drupalCreateUser($permissions);
+    return $account;
+  }
+
+  protected function createAuction() {
+    $controller = auction_get_controller();
+    $auction = $controller->create();
+    $auction->field_auction_starting_price[LANGUAGE_NONE][0]['value'] = rand(1, 1000000) / 100;
+    $auction->field_auction_buy_now_price[LANGUAGE_NONE][0]['value'] = rand(1, 1000000) / 100;
+    $auction->field_auction_minimum_price[LANGUAGE_NONE][0]['value'] = rand(1, 1000000) / 100;
+    $auction->field_auction_bid_step[LANGUAGE_NONE][0]['value'] = rand(1, 1000000) / 100;;
+    $auction->field_auction_date[LANGUAGE_NONE][0]['value'] = time() - 1;
+    $auction->field_auction_date[LANGUAGE_NONE][0]['value2'] = time() + 86400;
+    auction_save($auction);
+    return $auction;
+  }
+
+  protected function createAuctionNode($auction_id) {
+    $node = new stdClass();
+    $node->type = 'auction';
+    $node->title = $this->randomName();
+    $node->uid = $this->users['auction_creator']->uid;
+    $node->field_auction[LANGUAGE_NONE][0]['target_id'] = $auction_id;
+    node_save($node);
+    return $node;
+  }
+
+  function createNodeWithAuction() {
+    $auction = $this->createAuction();
+    return $this->createAuctionNode($auction->auction_id);
+  }
+
+  function placeBidInAuction($node_with_auction_path, $bid_amount) {
+    $this->drupalPost(
+            $node_with_auction_path,
+            array(
+              'bid_amount' => $bid_amount,
+              'form_id' => 'auction_bids_form',
+            ),
+            t('Place a bid')
+    );
+  }
+
+  protected $users = array(
+    'administrator' => NULL,
+    'auction_creator' => NULL,
+    'customer' => NULL,
+  );
+
+  private $dependencies = array(
+    'auction',
+    'date',
+    'entity',
+    'entity_token',
+    'entityreference',
+    'inline_entity_form',
+    'jquery_countdown',
+    'rules',
+    'ctools',
+    'views',
+    'field',
+    'field_ui',
+    'field_sql_storage',
+  );
+
+  /**
+   * Implementation of setUp().
+   */
+  function setUp() {
+    // Load dependent modules
+    parent::setUp($this->dependencies);
+
+    // Reset path.
+    $_GET['q'] = '';
+
+    // Create administrator, auction_creator and customer accounts.
+    foreach ($this->users as $key => &$value) {
+      $value = $this->{'create_' . $key}();
+    }
+  }
+
+
+
+}
+
+class AuctionTestCase extends AuctionBaseTestCase {
+
+  /**
+   * Implements getInfo().
+   */
+  public static function getInfo() {
+    return array(
+      'name' => t('Auction test'),
+      'description' => t('Administration tests for auction.'),
+      'group' => t('Auction'),
+    );
+  }
+
+  /**
+   * Test the permissions to access the settings form.
+   */
+  public function testAuctionAccessSettingsForm() {
+    foreach ($this->users as $key => $value) {
+      $this->drupalLogin($value);
+      $this->drupalGet('admin/config/auctions/settings');
+      switch ($key) {
+        case 'administrator':
+          // Administrator should have access to settings form and all it's fields.
+          $this->assertResponse(200, t('Auction administrator can access settings form'));
+          foreach (array(t('Currency code'), t('Usage fee'), t('Provision fee'), t('Bid step')) as $value) {
+            $this->assertText($value, t('@field_name is present at settings form', array('@field_name' => $value)));
+          }
+          break;
+        case 'auction_creator':
+        case 'customer':
+          $this->assertResponse(403, t('@role user is not able to access the settings form', array('@role' => $key)));
+          break;
+      }
+
+      $this->drupalGet('admin/structure/auctions');
+      switch ($key) {
+        case 'administrator':
+          // Administrator should have access to settings form and all it's fields.
+          $this->assertResponse(200, t('Auction administrator can access auctions overview page'));
+          $this->assertLink(t('Add auction'));
+          break;
+        case 'auction_creator':
+        case 'customer':
+          $this->assertResponse(403, t('@role user is not able to access auctions overview page', array('@role' => $key)));
+          break;
+      }
+    }
+  }
+
+  public function testAuctionCreateAuction() {
+    foreach ($this->users as $key => $value) {
+      $this->drupalLogin($value);
+      $this->drupalGet('node/add/auction');
+      switch ($key) {
+        case 'administrator':
+        case 'auction_creator':
+          $this->assertResponse(200, t('@role can access node/add/auction', array('@role' => $key)));
+          $node = $this->createNodeWithAuction();
+          $this->drupalGet('node/' . $node->nid);
+          $this->assertResponse(200, t('@role can create nodes with auctions', array('@role' => $key)));
+          $this->drupalGet('node/' . $node->nid . '/edit');
+          $this->assertResponse(200, t('@role can edit auction nodes', array('@role' => $key)));
+          $this->drupalGet('node/' . $node->nid . '/delete');
+          $this->assertResponse(200, t('@role can delete auction nodes', array('@role' => $key)));
+
+          $this->drupalLogin($this->users['customer']);
+          $this->drupalGet('node/' . $node->nid);
+          $this->assertResponse(200, t('Customer can view auction created by @role', array('@role' => $key)));
+          break;
+        case 'customer':
+          $this->assertResponse(403, t('@role user is not able to create an auction', array('@role' => $key)));
+          break;
+      }
+    }
+  }
+
+  public function testAuctionBidInAuction() {
+    $this->drupalLogin($this->users['auction_creator']);
+    $node = $this->createNodeWithAuction();
+    $node_path = 'node/' . $node->nid;
+    $controller = auction_get_controller();
+
+    foreach ($this->users as $key => $value) {
+      $this->drupalLogin($value);
+      $this->drupalGet($node_path);
+      switch ($key) {
+        case 'auction_creator':
+          $this->assertNoFieldById('edit-bid-amount');
+          break;
+        case 'administrator':
+        case 'customer':
+          $auction = auction_load($node->field_auction[LANGUAGE_NONE][0]['target_id']);
+          // Auction without bids doesn't have highest bid set
+          // so we need  to get the minimum available when doing
+          // the first bid.
+          $minimum_bid_amount = $controller->getMinimumBidAmount($auction);
+          if (is_object($controller->getHighestBid($auction))) {
+            $highest_bid = $controller->getHighestBid($auction)->amount;
+          }
+          else {
+            $highest_bid = $minimum_bid_amount;
+          }
+          $this->assertFieldById('edit-bid-amount');
+
+          // Check bid lower than minimum.
+          $this->placeBidInAuction($node_path, $minimum_bid_amount - $controller->getBidStep($auction));
+          $this->assertText(
+                  'Your bid amount is too low. It has to be at least',
+                  t('Bid lower than minimum bid amount can\'t be placed by @role', array('@role' => $key))
+          );
+
+          // Check proper bid.
+          $this->placeBidInAuction($node_path, $highest_bid + $controller->getBidStep($auction));
+          $this->assertText(
+                  t('Your bid has been saved.'),
+                  t('Proper bid can be placed by @role', array('@role' => $key))
+          );
+          $this->assertText(
+                  t('Your last bid is @amount', array('@amount' => $highest_bid + $controller->getBidStep($auction))),
+                  t('@role is informed about his highest bid', array('@role' => $key))
+          );
+
+          // Check bid when user is winning and bid placed is lower than he's previos one.
+          $this->placeBidInAuction($node_path, $minimum_bid_amount + $controller->getBidStep($auction));
+          $this->assertText(
+                  'Your bid amount is too low. It has to be at least',
+                  t('Bid lower than prevoius one cannot be placed by: @role', array('@role' => $key))
+          );
+
+          // Check bid when user is winning places higher bid.
+          $this->placeBidInAuction($node_path, $highest_bid + 3 * $controller->getBidStep($auction));
+          $this->assertText(
+                  t('Your bid has been saved.'),
+                  t('Higher bid can be placed by: @role', array('@role' => $key))
+          );
+          break;
+      }
+    }
+  }
+
+  public function testAuctionInstantBuy() {
+
+  }
+
+  public function testAuctionIsChangingStatus() {
+
+  }
+
+}

@@ -1,0 +1,31 @@
+name = Auction
+description = Allows selling nodes with auctions.
+
+core = 7.x
+
+package = Auctions
+
+files[] = includes/auction.controller.inc
+files[] = includes/auction.ief.inc
+files[] = includes/views/handlers/views_handler_field_auction_amount.inc
+files[] = includes/views/handlers/views_handler_filter_auction_user_placed_a_bid.inc
+files[] = includes/views/handlers/views_handler_filter_auction_user_is_winning.inc
+files[] = tests/auction.test
+
+dependencies[] = date
+dependencies[] = entity
+dependencies[] = entityreference
+dependencies[] = field
+dependencies[] = inline_entity_form
+dependencies[] = jquery_countdown
+dependencies[] = menu
+dependencies[] = number
+dependencies[] = rules
+dependencies[] = views
+
+; Information added by Drupal.org packaging script on 2014-11-06
+version = "7.x-1.0-alpha2+24-dev"
+core = "7.x"
+project = "auction"
+datestamp = "1415273618"
+

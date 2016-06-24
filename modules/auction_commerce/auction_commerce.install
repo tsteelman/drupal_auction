@@ -1,0 +1,97 @@
+<?php
+
+/**
+ * Aug 7, 2012
+ * @file auction_commerce.module
+ * @author blazey http://drupal.org/user/353861
+ */
+
+/**
+ * Implements hook_install().
+ */
+function auction_commerce_install() {
+  foreach (auction_commerce_order_types() as $key => $order_type) {
+    // Write the order type to the database.
+    $order_type['is_new'] = TRUE;
+    commerce_order_types_commerce_order_type_save($order_type);
+
+    // Add default fields to the order type.
+    commerce_order_configure_order_type($order_type['type']);
+  }
+
+  field_create_instance(array(
+    'label' => 'Auction',
+    'widget' => array(
+      'weight' => '-4',
+      'type' => 'inline_entity_form',
+      'module' => 'inline_entity_form',
+      'active' => 1,
+      'settings' => array(
+        'fields' => array(),
+        'type_settings' => array(),
+      ),
+    ),
+    'settings' => array(
+      'user_register_form' => FALSE,
+    ),
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'type' => 'entityreference_entity_view',
+        'settings' => array(
+          'link' => FALSE,
+        ),
+        'module' => 'entityreference',
+        'weight' => 0,
+      ),
+      'teaser' => array(
+        'type' => 'hidden',
+        'label' => 'above',
+        'settings' => array(),
+        'weight' => 0,
+      ),
+    ),
+    'required' => 1,
+    'description' => '',
+    'field_name' => 'field_auction',
+    'entity_type' => 'commerce_product',
+    'bundle' => 'auction',
+    'deleted' => '0',
+  ));
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function auction_commerce_uninstall() {
+  $order_types = auction_commerce_order_types();
+  $count = count($order_types);
+  $i = 0;
+  foreach ($order_types as $key => $order_type) {
+    // Delete order types. Fire menu rebuilding at the last element.
+    commerce_order_types_order_type_delete($order_type['type'], ++$i != $count);
+  }
+
+  field_delete_instance(field_info_instance('commerce_product', 'field_auction', 'auction'));
+}
+
+/**
+ * Returns order types defined by this module.
+ */
+function auction_commerce_order_types() {
+  $order_types = array();
+  $order_types['monthly_bill'] = array(
+    'type' => 'auction_monthly_bill',
+    'name' => 'Monthly bill',
+    'help' => 'Monthly bill for auction creator.',
+    'module' => 'commerce_order_types',
+  );
+  $order_types['auction'] = array(
+    'type' => 'auction_bill',
+    'name' => 'Auction',
+    'help' => 'Auction billing.',
+    'module' => 'commerce_order_types',
+  );
+
+  return $order_types;
+}

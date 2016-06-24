@@ -1,0 +1,9 @@
+/* 
+    Document   : auction.form
+    Created on : Jul 19, 2012, 4:54:40 PM
+    Author     : blazej
+*/
+
+.field-name-field-auction .fieldset-wrapper > .container-inline {
+  display: none;
+}

@@ -1,0 +1,932 @@
+<?php
+
+/**
+ * Jun 3, 2012
+ * @file auction.install
+ * @author blazey http://drupal.org/user/353861
+ */
+
+/**
+ * Implements hook_schema().
+ */
+function auction_schema() {
+  $schema = array();
+  $schema['auction'] = array(
+    'description' => 'The base table for auctions.',
+    'fields' => array(
+      'auction_id' => array(
+        'description' => 'The primary identifier for an auction.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'type' => array(
+        'description' => 'The type of this auction.',
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'status' => array(
+        'description' => 'Auction status.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'current_price' => array(
+        'description' => 'Current price.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'currency_code' => array(
+        'description' => 'Currency code.',
+        'type' => 'varchar',
+        'length' => 5,
+        'not null' => TRUE,
+        'default' => 'EUR',
+      ),
+      'uid' => array(
+        'description' => 'User uid.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'created' => array(
+        'description' => 'Created timestamp.',
+        'type' => 'int',
+        'size' => 'big',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'changed' => array(
+        'description' => 'Changed timestamp.',
+        'type' => 'int',
+        'size' => 'big',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'relisted' => array(
+        'description' => 'Flag indicating if the auction has already been relisted.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'foreign keys' => array(
+      'auction_owner' => array(
+        'table' => 'users',
+        'columns' => array('uid' => 'uid'),
+      ),
+    ),
+    'primary key' => array('auction_id'),
+  );
+  $schema['auction_bids'] = array(
+    'description' => 'The base table for bids.',
+    'fields' => array(
+      'bid_id' => array(
+        'description' => 'The primary identifier for a bid.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'auction_id' => array(
+        'description' => 'Auction this bid was placed in.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'type' => array(
+        'description' => 'The type of the bid. By default: standard bid and instant buy.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'uid' => array(
+        'description' => 'Bidders uid.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'amount' => array(
+        'description' => 'Bid amount.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'currency_code' => array(
+        'description' => 'Used currency.',
+        'type' => 'varchar',
+        'length' => 4,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'created' => array(
+        'description' => 'Created timestamp.',
+        'type' => 'int',
+        'size' => 'big',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'changed' => array(
+        'description' => 'Changed timestamp.',
+        'type' => 'int',
+        'size' => 'big',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+    ),
+    'foreign keys' => array(
+      'bidder' => array(
+        'table' => 'users',
+        'columns' => array('uid' => 'uid'),
+      ),
+      'auction' => array(
+        'table' => 'auction',
+        'columns' => array('auction_id' => 'auction_id'),
+      ),
+    ),
+    'primary key' => array('bid_id'),
+  );
+  return $schema;
+}
+
+/**
+ * Implements hook_install().
+ */
+function auction_install() {
+  // Add body field to content type.
+  node_types_rebuild();
+  $types = node_type_get_types();
+  node_add_body_field($types['auction']);
+  field_create_field(array(
+    'translatable' => '0',
+    'entity_types' => array(),
+    'settings' => array(
+      'precision' => '20',
+      'scale' => '2',
+      'decimal_separator' => '.',
+    ),
+    'storage' => array(
+      'type' => 'field_sql_storage',
+      'settings' => array(),
+      'module' => 'field_sql_storage',
+      'active' => '1',
+      'details' => array(
+        'sql' => array(
+          'FIELD_LOAD_CURRENT' => array(
+            'field_data_field_auction_starting_price' => array(
+              'value' => 'field_auction_starting_price_value',
+            ),
+          ),
+          'FIELD_LOAD_REVISION' => array(
+            'field_revision_field_auction_starting_price' => array(
+              'value' => 'field_auction_starting_price_value',
+            ),
+          ),
+        ),
+      ),
+    ),
+    'foreign keys' => array(),
+    'indexes' => array(),
+    'field_name' => 'field_auction_starting_price',
+    'type' => 'number_decimal',
+    'module' => 'number',
+    'active' => '1',
+    'locked' => '0',
+    'cardinality' => '1',
+    'deleted' => '0',
+    'columns' => array(
+      'value' => array(
+        'type' => 'numeric',
+        'precision' => '20',
+        'scale' => '2',
+        'not null' => FALSE,
+      ),
+    ),
+    'bundles' => array(
+      'auction' => array(
+        'auction',
+      ),
+    ),
+  ));
+  field_create_instance(array(
+    'label' => 'Starting price',
+    'widget' => array(
+      'weight' => '1',
+      'type' => 'number',
+      'module' => 'number',
+      'active' => 0,
+      'settings' => array(),
+    ),
+    'settings' => array(
+      'min' => '1',
+      'max' => '',
+      'prefix' => '',
+      'suffix' => '',
+      'user_register_form' => FALSE,
+    ),
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'type' => 'hidden',
+        'settings' => array(
+          'thousand_separator' => ' ',
+          'decimal_separator' => '.',
+          'scale' => 2,
+          'prefix_suffix' => TRUE,
+        ),
+        'module' => 'number',
+        'weight' => 0,
+      ),
+    ),
+    'required' => 0,
+    'description' => 'Leave empty to create auction in buy now only mode.',
+    'default_value' => NULL,
+    'field_name' => 'field_auction_starting_price',
+    'entity_type' => 'auction',
+    'bundle' => 'auction',
+    'deleted' => '0',
+  ));
+
+  field_create_field(array(
+    'translatable' => '0',
+    'entity_types' => array(),
+    'settings' => array(
+      'precision' => '20',
+      'scale' => '2',
+      'decimal_separator' => '.',
+    ),
+    'storage' => array(
+      'type' => 'field_sql_storage',
+      'settings' => array(),
+      'module' => 'field_sql_storage',
+      'active' => '1',
+      'details' => array(
+        'sql' => array(
+          'FIELD_LOAD_CURRENT' => array(
+            'field_data_field_auction_minimum_price' => array(
+              'value' => 'field_auction_minimum_price_value',
+            ),
+          ),
+          'FIELD_LOAD_REVISION' => array(
+            'field_revision_field_auction_minimum_price' => array(
+              'value' => 'field_auction_minimum_price_value',
+            ),
+          ),
+        ),
+      ),
+    ),
+    'foreign keys' => array(),
+    'indexes' => array(),
+    'field_name' => 'field_auction_minimum_price',
+    'type' => 'number_decimal',
+    'module' => 'number',
+    'active' => '1',
+    'locked' => '0',
+    'cardinality' => '1',
+    'deleted' => '0',
+    'columns' => array(
+      'value' => array(
+        'type' => 'numeric',
+        'precision' => '20',
+        'scale' => '2',
+        'not null' => FALSE,
+      ),
+    ),
+    'bundles' => array(
+      'auction' => array(
+        'auction',
+      ),
+    ),
+  ));
+  field_create_instance(array(
+    'label' => 'Minimum price',
+    'widget' => array(
+      'weight' => '2',
+      'type' => 'number',
+      'module' => 'number',
+      'active' => 0,
+      'settings' => array(),
+    ),
+    'settings' => array(
+      'min' => '1',
+      'max' => '',
+      'prefix' => '',
+      'suffix' => '',
+      'user_register_form' => FALSE,
+    ),
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'type' => 'hidden',
+        'settings' => array(
+          'thousand_separator' => ' ',
+          'decimal_separator' => '.',
+          'scale' => 2,
+          'prefix_suffix' => TRUE,
+        ),
+        'module' => 'number',
+        'weight' => 1,
+      ),
+    ),
+    'required' => 0,
+    'description' => '',
+    'default_value' => NULL,
+    'field_name' => 'field_auction_minimum_price',
+    'entity_type' => 'auction',
+    'bundle' => 'auction',
+    'deleted' => '0',
+  ));
+  field_create_field(array(
+    'translatable' => '0',
+    'entity_types' => array(),
+    'settings' => array(
+      'precision' => '20',
+      'scale' => '2',
+      'decimal_separator' => '.',
+    ),
+    'storage' => array(
+      'type' => 'field_sql_storage',
+      'settings' => array(),
+      'module' => 'field_sql_storage',
+      'active' => '1',
+      'details' => array(
+        'sql' => array(
+          'FIELD_LOAD_CURRENT' => array(
+            'field_data_field_auction_bid_step' => array(
+              'value' => 'field_auction_bid_step_value',
+            ),
+          ),
+          'FIELD_LOAD_REVISION' => array(
+            'field_revision_field_auction_bid_step' => array(
+              'value' => 'field_auction_bid_step_value',
+            ),
+          ),
+        ),
+      ),
+    ),
+    'foreign keys' => array(),
+    'indexes' => array(),
+    'field_name' => 'field_auction_bid_step',
+    'type' => 'number_decimal',
+    'module' => 'number',
+    'active' => '1',
+    'locked' => '0',
+    'cardinality' => '1',
+    'deleted' => '0',
+    'columns' => array(
+      'value' => array(
+        'type' => 'numeric',
+        'precision' => '20',
+        'scale' => '2',
+        'not null' => FALSE,
+      ),
+    ),
+    'bundles' => array(
+      'auction' => array(
+        'auction',
+      ),
+    ),
+  ));
+  field_create_instance(array(
+    'label' => 'Bid step',
+    'widget' => array(
+      'weight' => '2',
+      'type' => 'number',
+      'module' => 'number',
+      'active' => 0,
+      'settings' => array(),
+    ),
+    'settings' => array(
+      'min' => '1',
+      'max' => '',
+      'prefix' => '',
+      'suffix' => '',
+      'user_register_form' => FALSE,
+    ),
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'type' => 'hidden',
+        'settings' => array(
+          'thousand_separator' => ' ',
+          'decimal_separator' => '.',
+          'scale' => 2,
+          'prefix_suffix' => TRUE,
+        ),
+        'module' => 'number',
+        'weight' => 1,
+      ),
+    ),
+    'required' => 1,
+    'description' => '',
+    'default_value' => NULL,
+    'field_name' => 'field_auction_bid_step',
+    'entity_type' => 'auction',
+    'bundle' => 'auction',
+    'deleted' => '0',
+  ));
+
+  field_create_field(array(
+    'translatable' => '0',
+    'entity_types' => array(),
+    'settings' => array(
+      'precision' => '20',
+      'scale' => '2',
+      'decimal_separator' => '.',
+    ),
+    'storage' => array(
+      'type' => 'field_sql_storage',
+      'settings' => array(),
+      'module' => 'field_sql_storage',
+      'active' => '1',
+      'details' => array(
+        'sql' => array(
+          'FIELD_LOAD_CURRENT' => array(
+            'field_data_field_auction_buy_now_price' => array(
+              'value' => 'field_auction_buy_now_price_value',
+            ),
+          ),
+          'FIELD_LOAD_REVISION' => array(
+            'field_revision_field_auction_buy_now_price' => array(
+              'value' => 'field_auction_buy_now_price_value',
+            ),
+          ),
+        ),
+      ),
+    ),
+    'foreign keys' => array(),
+    'indexes' => array(),
+    'field_name' => 'field_auction_buy_now_price',
+    'type' => 'number_decimal',
+    'module' => 'number',
+    'active' => '1',
+    'locked' => '0',
+    'cardinality' => '1',
+    'deleted' => '0',
+    'columns' => array(
+      'value' => array(
+        'type' => 'numeric',
+        'precision' => '20',
+        'scale' => '2',
+        'not null' => FALSE,
+      ),
+    ),
+    'bundles' => array(
+      'auction' => array(
+        'auction',
+      ),
+    ),
+  ));
+  field_create_instance(array(
+    'label' => 'Buy now price',
+    'widget' => array(
+      'weight' => '3',
+      'type' => 'number',
+      'module' => 'number',
+      'active' => 0,
+      'settings' => array(),
+    ),
+    'settings' => array(
+      'min' => '1',
+      'max' => '',
+      'prefix' => '',
+      'suffix' => '',
+      'user_register_form' => FALSE,
+    ),
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'type' => 'hidden',
+        'settings' => array(
+          'thousand_separator' => ' ',
+          'decimal_separator' => '.',
+          'scale' => 2,
+          'prefix_suffix' => TRUE,
+        ),
+        'module' => 'number',
+        'weight' => 2,
+      ),
+    ),
+    'required' => 0,
+    'description' => 'Leave empty to disable buy now.',
+    'default_value' => NULL,
+    'field_name' => 'field_auction_buy_now_price',
+    'entity_type' => 'auction',
+    'bundle' => 'auction',
+    'deleted' => '0',
+  ));
+
+ 
+
+  field_create_field(array(
+    'translatable' => '0',
+    'entity_types' => array(),
+    'settings' => array(
+      'granularity' => array(
+        'month' => 'month',
+        'day' => 'day',
+        'hour' => 'hour',
+        'year' => 'year',
+        'minute' => 'minute',
+        'second' => 'second',
+      ),
+      'tz_handling' => 'site',
+      'timezone_db' => 'UTC',
+      'cache_enabled' => 0,
+      'cache_count' => '4',
+      'todate' => 'required',
+    ),
+    'storage' => array(
+      'type' => 'field_sql_storage',
+      'settings' => array(),
+      'module' => 'field_sql_storage',
+      'active' => '1',
+      'details' => array(
+        'sql' => array(
+          'FIELD_LOAD_CURRENT' => array(
+            'field_data_field_auction_date' => array(
+              'value' => 'field_auction_date_value',
+              'value2' => 'field_auction_date_value2',
+            ),
+          ),
+          'FIELD_LOAD_REVISION' => array(
+            'field_revision_field_auction_date' => array(
+              'value' => 'field_auction_date_value',
+              'value2' => 'field_auction_date_value2',
+            ),
+          ),
+        ),
+      ),
+    ),
+    'foreign keys' => array(),
+    'indexes' => array(),
+    'field_name' => 'field_auction_date',
+    'type' => 'datestamp',
+    'module' => 'date',
+    'active' => '1',
+    'locked' => '0',
+    'cardinality' => '1',
+    'deleted' => '0',
+    'columns' => array(
+      'value' => array(
+        'type' => 'int',
+        'not null' => FALSE,
+        'sortable' => TRUE,
+        'views' => TRUE,
+      ),
+      'value2' => array(
+        'type' => 'int',
+        'not null' => FALSE,
+        'sortable' => TRUE,
+        'views' => FALSE,
+      ),
+    ),
+    'bundles' => array(
+      'auction' => array(
+        'auction',
+      ),
+    ),
+  ));
+  field_create_instance(array(
+    'label' => 'Date',
+    'widget' => array(
+      'weight' => '4',
+      'type' => 'date_select',
+      'module' => 'date',
+      'active' => 1,
+      'settings' => array(
+        'input_format' => 'm/d/Y - H:i:s',
+        'input_format_custom' => '',
+        'year_range' => '-0:+1',
+        'increment' => '1',
+        'label_position' => 'above',
+        'text_parts' => array(),
+        'display_all_day' => 0,
+      ),
+    ),
+    'settings' => array(
+      'default_value' => 'now',
+      'default_value_code' => '',
+      'default_value2' => 'strtotime',
+      'default_value_code2' => '+14 days',
+      'user_register_form' => FALSE,
+    ),
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'type' => 'hidden',
+        'settings' => array(
+          'format_type' => 'long',
+          'multiple_number' => '',
+          'multiple_from' => '',
+          'multiple_to' => '',
+          'fromto' => 'both',
+        ),
+        'module' => 'date',
+        'weight' => 3,
+      ),
+    ),
+    'required' => 1,
+    'description' => '',
+    'field_name' => 'field_auction_date',
+    'entity_type' => 'auction',
+    'bundle' => 'auction',
+    'deleted' => '0',
+  ));
+
+  field_create_field(array(
+    'translatable' => '0',
+    'entity_types' => array(),
+    'settings' => array(
+      'target_type' => 'auction',
+      'handler' => 'base',
+      'handler_submit' => 'Change handler',
+      'handler_settings' => array(
+        'target_bundles' => array(
+          'auction' => 'auction',
+        ),
+        'sort' => array(
+          'type' => 'none',
+          'property' => 'auction_id',
+          'field' => 'field_auction_starting_price:value',
+          'direction' => 'ASC',
+        ),
+        'behaviors' => array(
+          'views-select-list' => array(
+            'status' => 0,
+          ),
+        ),
+      ),
+    ),
+    'storage' => array(
+      'type' => 'field_sql_storage',
+      'settings' => array(),
+      'module' => 'field_sql_storage',
+      'active' => '1',
+      'details' => array(
+        'sql' => array(
+          'FIELD_LOAD_CURRENT' => array(
+            'field_data_field_auction' => array(
+              'target_id' => 'field_auction_target_id',
+            ),
+          ),
+          'FIELD_LOAD_REVISION' => array(
+            'field_revision_field_auction' => array(
+              'target_id' => 'field_auction_target_id',
+            ),
+          ),
+        ),
+      ),
+    ),
+    'foreign keys' => array(
+      'node' => array(
+        'table' => 'node',
+        'columns' => array(
+          'target_id' => 'nid',
+        ),
+      ),
+    ),
+    'indexes' => array(
+      'target_id' => array(
+        'target_id',
+      ),
+    ),
+    'field_name' => 'field_auction',
+    'type' => 'entityreference',
+    'module' => 'entityreference',
+    'active' => '1',
+    'locked' => '0',
+    'cardinality' => '1',
+    'deleted' => '0',
+    'columns' => array(
+      'target_id' => array(
+        'description' => 'The id of the target entity',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+      ),
+    ),
+    'bundles' => array(
+      'node' => array('auction'),
+    ),
+  ));
+  field_create_instance(array(
+    'label' => 'Auction',
+    'widget' => array(
+      'weight' => '-4',
+      'type' => 'inline_entity_form',
+      'module' => 'inline_entity_form',
+      'active' => 1,
+      'settings' => array(
+        'fields' => array(),
+        'type_settings' => array(),
+      ),
+    ),
+    'settings' => array(
+      'user_register_form' => FALSE,
+    ),
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'type' => 'entityreference_entity_view',
+        'settings' => array(
+          'link' => FALSE,
+        ),
+        'module' => 'entityreference',
+        'weight' => 0,
+      ),
+      'teaser' => array(
+        'type' => 'hidden',
+        'label' => 'above',
+        'settings' => array(),
+        'weight' => 0,
+      ),
+    ),
+    'required' => 1,
+    'description' => '',
+    'field_name' => 'field_auction',
+    'entity_type' => 'node',
+    'bundle' => 'auction',
+    'deleted' => '0',
+  ));
+
+$roles = db_select('role', 'r')->fields('r')->condition('name', 'auction_administrator')->execute()->fetchAssoc();
+  if (empty($roles)) {
+    // Create a default role for auction administrators, creators and bidders.
+    $admin_role = new stdClass();
+    $admin_role->name = 'auction_administrator';
+    $admin_role->weight = 2;
+    $admin_role->module = 'auction';
+    user_role_save($admin_role);
+    user_role_grant_permissions($admin_role->rid, array('administer auctions', 'create auctions', 'view auctions', 'bid in auctions', 'view bids'));
+
+    $auction_creator_role = new stdClass();
+    $auction_creator_role->name = 'auction_creator';
+    $auction_creator_role->weight = 2;
+    $auction_creator_role->module = 'auction';
+    user_role_save($auction_creator_role);
+    user_role_grant_permissions($auction_creator_role->rid, array('create auctions', 'bid in auctions', 'view auctions', 'view bids'));
+
+    $bidder_role = new stdClass();
+    $bidder_role->name = 'auction_bidder';
+    $bidder_role->weight = 2;
+    $bidder_role->module = 'auction';
+    user_role_save($bidder_role);
+    user_role_grant_permissions($bidder_role->rid, array('bid in auctions', 'view auctions', 'view bids'));
+  }
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function auction_uninstall() {
+  $fields = array(
+    'field_auction_buy_now_only',
+    'field_auction_starting_price',
+    'field_auction_minimum_price',
+    'field_auction_bid_step',
+    'field_auction_buy_now_price',
+    'field_auction_date',
+  );
+  foreach ($fields as $fieldname) {
+    field_delete_instance(field_info_instance('auction', $fieldname, 'auction'));
+    field_delete_field($fieldname);
+  }
+
+  field_delete_instance(field_info_instance('node', 'field_auction', 'auction'));
+  field_delete_field('field_auction');
+  node_type_delete('auction');
+}
+
+/**
+ * Adds per auction bid step field.
+ */
+function auction_update_7101() {
+  if (field_info_field('field_auction_bid_step')) {
+    return;
+  }
+  field_create_field(array(
+    'translatable' => '0',
+    'entity_types' => array(),
+    'settings' => array(
+      'precision' => '20',
+      'scale' => '2',
+      'decimal_separator' => '.',
+    ),
+    'storage' => array(
+      'type' => 'field_sql_storage',
+      'settings' => array(),
+      'module' => 'field_sql_storage',
+      'active' => '1',
+      'details' => array(
+        'sql' => array(
+          'FIELD_LOAD_CURRENT' => array(
+            'field_data_field_auction_bid_step' => array(
+              'value' => 'field_auction_bid_step_value',
+            ),
+          ),
+          'FIELD_LOAD_REVISION' => array(
+            'field_revision_field_auction_bid_step' => array(
+              'value' => 'field_auction_bid_step_value',
+            ),
+          ),
+        ),
+      ),
+    ),
+    'foreign keys' => array(),
+    'indexes' => array(),
+    'field_name' => 'field_auction_bid_step',
+    'type' => 'number_decimal',
+    'module' => 'number',
+    'active' => '1',
+    'locked' => '0',
+    'cardinality' => '1',
+    'deleted' => '0',
+    'columns' => array(
+      'value' => array(
+        'type' => 'numeric',
+        'precision' => '20',
+        'scale' => '2',
+        'not null' => FALSE,
+      ),
+    ),
+    'bundles' => array(
+      'auction' => array(
+        'auction',
+      ),
+    ),
+  ));
+  field_create_instance(array(
+    'label' => 'Bid step',
+    'widget' => array(
+      'weight' => '2',
+      'type' => 'number',
+      'module' => 'number',
+      'active' => 0,
+      'settings' => array(),
+    ),
+    'settings' => array(
+      'min' => '1',
+      'max' => '',
+      'prefix' => '',
+      'suffix' => '',
+      'user_register_form' => FALSE,
+    ),
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'type' => 'hidden',
+        'settings' => array(
+          'thousand_separator' => ' ',
+          'decimal_separator' => '.',
+          'scale' => 2,
+          'prefix_suffix' => TRUE,
+        ),
+        'module' => 'number',
+        'weight' => 1,
+      ),
+    ),
+    'required' => 1,
+    'description' => '',
+    'default_value' => NULL,
+    'field_name' => 'field_auction_bid_step',
+    'entity_type' => 'auction',
+    'bundle' => 'auction',
+    'deleted' => '0',
+  ));
+}
+
+/**
+ * Fixes missing bid step field values.
+ */
+function auction_update_7102() {
+  $auctions = entity_load('auction');
+  foreach ($auctions as $auction) {
+    if (empty($auction->field_auction_bid_step[LANGUAGE_NONE][0]['value'])) {
+      $auction->field_auction_bid_step[LANGUAGE_NONE][0]['value'] = auction_get_settings('bid_step');
+      auction_save($auction);
+    }
+  }
+}
+
+/**
+ * Lock 'auction' node type and move it to 'auction' module.
+ */
+function auction_update_7103() {
+  db_update('node_type')
+    ->fields(array(
+      'module' => 'auction',
+      'custom' => 0,
+      'modified' => 0,
+      'locked' => 1,
+    ))
+    ->condition('type', 'auction')
+    ->execute();
+}

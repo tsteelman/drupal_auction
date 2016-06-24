@@ -1,0 +1,654 @@
+<?php
+
+/**
+ * May 9, 2012
+ * @file auction.module
+ * @author blazey http://drupal.org/user/353861
+ */
+define('AUCTION_STATUS_NOT_YET_STARTED', 1);
+define('AUCTION_STATUS_ACTIVE', 2);
+define('AUCTION_STATUS_FINISHED', 3);
+
+define('AUCTION_BID_TYPE_STANDARD', 1);
+define('AUCTION_BID_TYPE_INSTANT_BUY', 2);
+
+/**
+ * @done Add fields to auction programatically.
+ * @done Implement ief default fields.
+ * @done Auction delete handling.
+ * @done Bid step implementation.
+ * @done Finish hook_views_post_execute implementation.
+ * @done Handle people that are currently winning in auction.
+ * @done Change minimum price in bid form to the same value as the one computed
+ *       in hook_views_post_execute.
+ * @done Bundle auction field.
+ * @done Call auction delete while deleting parent node.
+ * @done Check auction status periodically and while loading from db (hook_load).
+ * @done Add default views.
+ * @done Implement 'user placed a bid in auction' and 'user is winning' auction filters.
+ * @done Prevent creator from bidding in auctions.
+ * @done Hide auction status field from editing.
+ * @done Remove add next auction button from ief form.
+ * @done Buy now functionality.
+ * @done Add javascript countdown.
+ * @done Implement rules events.
+ * @done Add default rules.
+ * @done Disable auction editing when it's active.
+ * @done Bidders name available only for auction creators and users with permission.
+ * @done Relisting finished auctions.
+ *
+ * @done Move commerce integration to separate module.
+ * @done Define auction fee line item type.
+ * @done Implement hook_cron and hook_cron_queue_info for monthly bills.
+ * @done Fetching auctions that finished last month.
+ * @done Add fee ranges.
+ * @done Create new orders for each seller every month.
+ * @done Send emails with link to order to sellers.
+ * @done Disable editing of unpublished auction nodes with hook_node_access.
+ * @done Define auction line item type.
+ * @done Create orders for people that won auction.
+ * @done Notify auction winners about new orders.
+ * @done Check if checkout works with auction bills and monthly bills.
+ * @done Remove relist feature from already relisted auctions.
+ * @done Debug why 'Redirect instant-buy users straight to checkout' second condition evaluates to false when using instant buy.
+ * @done Save auction entity while saving parent node.
+ *
+ * ipinfodb.com api key for reri: 293d05612a28cbea21e96fe7de9d1c297b311a964fac470db2a2e209360f9de9
+ */
+
+/**
+ * Implements hook_permission().
+ *
+ * @return array
+ */
+function auction_permission() {
+  return array(
+      'administer auctions' => array(
+          'title' => t('Administer auctions'),
+          'description' => t('Perform administration tasks for auctions.'),
+      ),
+      'create auctions' => array(
+          'title' => t('Create auctions'),
+          'description' => t('Create auctions.'),
+      ),
+      'bid in auctions' => array(
+          'title' => t('Place bids in auctions'),
+          'description' => t('Bid in auctions.'),
+      ),
+      'view auctions' => array(
+          'title' => t('View auctions'),
+          'description' => t('Users with this permission can see auctions.'),
+      ),
+      'view bids' => array(
+        'title' => t('View bids in auctions'),
+        'description' => t('Users with this permission can see bids in auctions.'),
+      ),
+  );
+}
+
+/**
+ * Implements hook_theme().
+ *
+ * @param array $existing
+ * @param string $type
+ * @param string $theme
+ * @param string $path
+ * @return array
+ */
+function auction_theme($existing, $type, $theme, $path) {
+  return array(
+      'auction_bids' => array(
+          'file' => 'auction.bids.inc',
+          'template' => 'auction.bids',
+          'variables' => array(
+              'auction' => NULL,
+              'view_mode' => 'full',
+              'langcode' => NULL,
+              'form' => '',
+              'history' => '',
+          ),
+      ),
+      'auction_bids_overview' => array(
+          'file' => 'auction.bids.inc',
+          'variables' => array(
+              'bids' => array(),
+          ),
+      ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ *
+ * @return array
+ */
+function auction_menu() {
+  $items = array();
+  $items['admin/config/auctions'] = array(
+      'title' => 'Auctions',
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('auction_settings_form'),
+      'access arguments' => array('administer auctions'),
+      'file' => 'auction.admin.inc',
+      'type' => MENU_NORMAL_ITEM,
+  );
+  $items['admin/config/auctions/settings'] = array(
+      'title' => 'Settings',
+      'type' => MENU_DEFAULT_LOCAL_TASK,
+  );
+  $items['auctions/relist/%auction'] = array(
+      'title' => 'Relist auction',
+      'page callback' => 'auction_relist',
+      'page arguments' => array(2),
+      'access callback' => 'auction_entity_access',
+      'access arguments' => array('relist', 2),
+      'file' => 'auction.relist.inc',
+      'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_menu_alter().
+ *
+ * @param array $items
+ */
+function auction_menu_alter(&$items) {
+  $items['admin/structure/auctions']['access callback'] = 'user_access';
+  $items['admin/structure/auctions']['access arguments'] = array('administer auctions');
+}
+
+/**
+ * Implements hook_cron().
+ */
+function auction_cron() {
+  $controller = auction_get_controller();
+
+  $auctions_to_activte = db_select('field_data_field_auction_date', 'ad');
+  $auctions_to_activte->join('auction', 'a', 'ad.entity_id = a.auction_id');
+  $auctions_to_activte->fields('a', array('auction_id'))
+          ->condition('a.status', AUCTION_STATUS_NOT_YET_STARTED)
+          ->condition('ad.field_auction_date_value', time(), '>=')
+          ->execute()
+          ->fetchAll();
+  foreach ($auctions_to_activte as $value) {
+    $controller->activate(auction_load($value->auction_id));
+  }
+
+  $auctions_to_deactivte = db_select('field_data_field_auction_date', 'ad');
+  $auctions_to_deactivte->join('auction', 'a', 'ad.entity_id = a.auction_id');
+  $auctions_to_deactivte->fields('a', array('auction_id'))
+          ->condition('a.status', AUCTION_STATUS_ACTIVE)
+          ->condition('ad.field_auction_date_value2', time(), '<=')
+          ->execute()
+          ->fetchAll();
+  foreach ($auctions_to_deactivte as $value) {
+    $controller->deactivate(auction_load($value->auction_id));
+  }
+}
+
+/**
+ * Implements hook_entity_info().
+ */
+function auction_entity_info() {
+  $return = array(
+    'auction' => array(
+      'label' => t('Auction', array(), array('context' => 'auction entity')),
+      'controller class' => 'AuctionEntityController',
+      'locking mode' => 'pessimistic',
+      'base table' => 'auction',
+      'load hook' => 'auction_load',
+      'uri callback' => 'auction_uri',
+      'label callback' => 'auction_label',
+      'view callback' => 'auction_view',
+      'fieldable' => TRUE,
+      'entity keys' => array(
+        'id' => 'auction_id',
+        'bundle' => 'type',
+      ),
+      'bundle keys' => array(
+        'bundle' => 'type',
+      ),
+      'bundles' => array(
+        'auction' => array(
+          'label' => t('Auction', array(), array('context' => 'auction entity')),
+          'admin' => array(
+            'path' => 'admin/structure/auctions/auction',
+            'access arguments' => array('administer auctions'),
+          ),
+        ),
+      ),
+      'view modes' => array(
+        'administrator' => array(
+          'label' => t('Administrator'),
+          'custom settings' => FALSE,
+        ),
+        'customer' => array(
+          'label' => t('Customer'),
+          'custom settings' => FALSE,
+        ),
+      ),
+      'token type' => 'auction',
+      'access callback' => 'auction_entity_access',
+      'access arguments' => array(
+        'user key' => 'uid',
+        'access tag' => 'auction_access',
+      ),
+      'permission labels' => array(
+        'singular' => t('auction'),
+        'plural' => t('auctions'),
+      ),
+      'admin ui' => array(
+        'path' => 'admin/structure/auctions',
+        'file' => 'auction.admin.inc',
+        'file path' => drupal_get_path('module', 'auction'),
+        'access arguments' => array('administer auctions'),
+      ),
+      'inline entity form' => array(
+        'controller' => 'AuctionInlineEntityFormController',
+      ),
+    ),
+  );
+
+  return $return;
+}
+
+/**
+ * Entity view callback.
+ */
+function auction_view($auction, $view_mode = 'full', $langcode = NULL, $content = array()) {
+  if (count($auction) == 1) {
+    $controller = auction_get_controller();
+    $auction = reset($auction);
+    return $controller->buildContent($auction, $view_mode, $langcode = NULL, $content = array());
+  }
+}
+
+/**
+ * Implements hook_entity_info_alter().
+ */
+function auction_entity_info_alter(&$entity_info) {
+  foreach ($entity_info['auction']['bundles'] as $type => &$bundle) {
+    // $bundle['admin'] = array(
+    //     'path' => 'admin/structure/auctions/type/auction',
+    //     'access arguments' => array('administer auctions'),
+    // );
+  }
+}
+
+/**
+ * Implements hook_entity_property_info().
+ *
+ * @return array
+ */
+function auction_entity_property_info() {
+  $info = array();
+  // Add meta-data about the basic node properties.
+  $properties = &$info['auction']['properties'];
+
+  $properties['author'] = array(
+    'label' => t("Author"),
+    'type' => 'user',
+    'description' => t("The author of the auction."),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'administer auctions',
+    'required' => TRUE,
+    'schema field' => 'uid',
+  );
+
+  $properties['current_price_decimal'] = array(
+    'label' => t('Current price with decimals'),
+    'type' => 'decimal',
+    'description' => t('Current price as seen in auction nodes'),
+    'getter callback' => 'auction_entity_get_current_price',
+    'required' => FALSE,
+  );
+
+  // It's not used now. Consider removing.
+  $properties['winning_user'] = array(
+    'label' => t("Winning user"),
+    'type' => 'user',
+    'description' => t("The user that is currently winning in auction."),
+    'getter callback' => 'auction_entity_get_winning_user',
+    'required' => FALSE,
+  );
+
+  return $info;
+}
+
+/**
+ * Implements hook_entity_delete().
+ *
+ * @param stdClass $entity
+ * @param string $type
+ */
+function auction_entity_delete($entity, $type) {
+  // Delete attached auction along with parent entity.
+  if (isset($entity->field_auction) && !empty($entity->field_auction)) {
+    $wrapper = entity_metadata_wrapper($type, $entity);
+    auction_delete($wrapper->field_auction->raw());
+  }
+}
+
+/**
+ * Implements hook_token_info().
+ */
+function auction_token_info() {
+  $info = array();
+  $info['tokens']['auction']['current_price'] = array(
+    'name' => t('Current price'),
+    'description' => t('Auction current price.'),
+  );
+  $info['tokens']['auction']['link'] = array(
+    'name' => t('Link'),
+    'description' => t('Link to auction node.'),
+  );
+  $info['tokens']['auction']['bids_overview'] = array(
+    'name' => t('Bids overview'),
+    'description' => t('Bidders profiles links sorted by highest bid.'),
+  );
+
+  return $info;
+}
+
+/**
+ * Implements hook_node_info().
+ */
+function auction_node_info() {
+  return array(
+    'auction' => array(
+      'name' => t('Auction'),
+      'base' => 'node_content',
+      'description' => t('An auction'),
+      'title_label' => t('Title'),
+    )
+  );
+}
+
+/**
+ * Implements hook_tokens().
+ */
+function auction_tokens($type, $tokens, array $data = array(), array $options = array()) {
+  $replacements = array();
+  if ($type == 'auction' && !empty($data['auction'])) {
+    $auction = $data['auction'];
+    foreach ($tokens as $name => $original) {
+      switch ($name) {
+
+        case 'current_price':
+          $replacements[$original] = auction_format_price(
+                  $auction->current_price,
+                  $auction->currency_code
+          );
+          break;
+
+        case 'link':
+          $parent_wrapper = auction_get_controller()
+            ->getParentEntityWrapper($auction->auction_id);
+          $replacements[$original] = url( 'node/' . $parent_wrapper->nid->value(), array('absolute' => TRUE));
+          break;
+
+        case 'bids_overview':
+          $bids_overview = array(
+            '#theme' => 'auction_bids_overview',
+            '#bids' => $auction->bids,
+          );
+          $replacements[$original] = render($bids_overview);
+          break;
+
+      }
+    }
+  }
+
+  return $replacements;
+}
+
+/**
+ * Implements hook_field_widget_form_alter().
+ *
+ * @param array $element
+ * @param array $form_state
+ * @param array $context
+ */
+function auction_field_widget_form_alter(&$element, &$form_state, $context) {
+  if ($context['field']['field_name'] == 'field_auction') {
+    $element['#attached']['css'][] = drupal_get_path('module', 'auction') . '/css/auction.form.css';
+  }
+}
+
+/**
+ * Implements hook_views_api().
+ *
+ * @return array
+ */
+function auction_views_api() {
+  return array(
+      'api' => 3,
+      'path' => drupal_get_path('module', 'auction') . '/includes/views',
+  );
+}
+
+/**
+ * Implements hook_node_access().
+ *
+ * @param stdClass $node
+ * @param string $op
+ * @param stdClass $account
+ */
+function auction_node_access($node, $op, $account) {
+  // Make sure noone can edit auction after it's finished.
+  if (isset($node->type) && $node->type == 'auction' && $op == 'edit') {
+    $auction = entity_metadata_wrapper('node', $node)->field_auction->value();
+    if ($auction->status == AUCTION_STATUS_FINISHED) {
+      return NODE_ACCESS_DENY;
+    }
+  }
+  return NODE_ACCESS_IGNORE;
+}
+
+/**
+ * Access callback for the entity API.
+ *
+ * @param $op
+ *   The operation being performed. One of 'view', 'update', 'create', 'delete'
+ *   or just 'edit' (being the same as 'create' or 'update').
+ * @param $auction
+ *   (optional) An auction to check access for. If nothing is given, access for
+ *   all auctions is determined.
+ * @param $account
+ *   (optional) The user to check for. Leave it to NULL to check for the global user.
+ *
+ * @return boolean
+ *   Whether access is allowed or not.
+ */
+function auction_entity_access($op, $auction = NULL, $account = NULL) {
+  if (!isset($account)) {
+    global $user;
+    $account = $user;
+  }
+  switch ($op) {
+    case 'create':
+      return user_access('administer auctions', $account)
+              || user_access('create auctions', $account);
+    case 'view':
+      return user_access('administer auctions', $account)
+              || user_access('view auctions', $account);
+    case 'edit':
+    case 'update':
+      return (user_access('administer auctions') && $auction->status != AUCTION_STATUS_FINISHED)
+              || ($auction->uid == $account->uid && $auction->status == AUCTION_STATUS_NOT_YET_STARTED);
+    case 'bid':
+      return user_access('administer auctions')
+              || ($auction && user_access('bid in auctions', $account) && $auction->uid != $account->uid);
+    case 'change status':
+      return user_access('administer auctions', $account);
+    case 'relist':
+      return $auction->status == AUCTION_STATUS_FINISHED &&
+              (user_access('administer auctions') || $auction->uid == $account->uid);
+  }
+}
+
+/**
+ * Implements hook_views_post_execute().
+ *
+ * @param view $view
+ */
+function auction_views_post_execute(&$view) {
+  if ($view->name == 'auction_bids') {
+    /*
+     * We need starting price in the view. Once we have that we check if there
+     * are more than 2 results. If there are we compare against amount of the
+     * second one, if no we compare against starting price. We
+     * set the value of last bid to previously selected value + bid_step.
+     */
+    if (is_array($view->result) && !empty($view->result)) {
+      global $user;
+      $auction = auction_load($view->result[0]->auction_auction_bids_auction_id);
+      $access = auction_entity_access('see bidders names', $auction);
+
+      foreach ($view->result as &$value) {
+        if (!$access && $value->users_auction_bids_uid != $user->uid) {
+          $value->users_auction_bids_name = auction_mask_username($value->users_auction_bids_name);
+        }
+      }
+
+      if ($view->result[0]->auction_bids_type == AUCTION_BID_TYPE_STANDARD) {
+        $starting_price = $view->result[0]->field_field_auction_starting_price[0]['raw']['value'];
+
+        if (count($view->result) == 1) {
+          $second_highest_bid_amount = $starting_price;
+        }
+        else {
+          $second_highest_bid_amount = $view->result[1]->auction_bids_amount / 100;
+        }
+        $view->result[0]->auction_bids_amount =
+                auction_get_controller()->determineCurrentPrice(
+                        auction_views_prepare_view_results_for_determining_price($view->result), $starting_price)
+                * 100;
+      }
+    }
+  }
+}
+
+function auction_views_prepare_view_results_for_determining_price($result) {
+  foreach ($result as &$value) {
+    $value->amount = $value->auction_bids_amount;
+  }
+  return $result;
+}
+
+/**
+ * Masks user name by leaving only first and last letter.
+ *
+ * @param string $name
+ * @return string
+ */
+function auction_mask_username($name) {
+  return $name[0] . '***' . $name[strlen($name) - 1];
+}
+
+/**
+ * Returns auction controller.
+ *
+ * @return AuctionEntityController
+ */
+function auction_get_controller() {
+  return entity_get_controller('auction');
+}
+
+function auction_load($auction_id) {
+  $results = auction_get_controller()->load(array($auction_id));
+  return array_shift($results);
+}
+
+function auction_save($auction) {
+  return auction_get_controller()->save($auction);
+}
+
+function auction_delete($auction_id) {
+  return auction_get_controller()->delete(array($auction_id));
+}
+
+function auction_get_minimum_bid_value($auction) {
+  return auction_get_controller()->getMinimumBidAmount($auction);
+}
+
+function auction_get_highest_bid_value($auction) {
+  return auction_get_controller()->getHighestBid($auction)->amount;
+}
+
+function auction_get_current_price($auction) {
+  return auction_get_controller()->getCurrentPrice($auction);
+}
+
+/**
+ * Entity uri callback: gives modules a chance to specify a path for an auction.
+ */
+function auction_uri($auction) {
+  // It works only for nodes.
+  $node = auction_get_controller()->getAuctionParentNode($auction);
+
+  return array('path' => 'node/' . $node->nid);
+}
+
+function auction_label($auction) {
+  return 'Auction ' . $auction->auction_id;
+}
+
+function auction_get_status($auction) {
+  return $auction->status;
+}
+
+function auction_get_settings($property = NULL) {
+  static $settings = NULL;
+  if (is_null($settings)) {
+    $settings = array(
+        'currency' => variable_get('auction_currency', 'EUR'),
+        'bid_step' => variable_get('auction_bid_step', 0.5),
+        'buy_now_mode' => variable_get('auction_buy_now_mode', 'first bid'),
+        'buy_now_threshold' => variable_get('auction_buy_now_threshold', 80),
+        'usage_fee' => variable_get('auction_usage_fee', '15'),
+        'provision_fee' => variable_get('auction_provision_fee', 0.05),
+    );
+  }
+
+  if ($property === NULL) {
+    return $settings;
+  }
+
+  return $settings[$property];
+}
+
+function auction_statuses() {
+  return array(
+      AUCTION_STATUS_NOT_YET_STARTED => t('Not yet started'),
+      AUCTION_STATUS_ACTIVE => t('Active'),
+      AUCTION_STATUS_FINISHED => t('Finished'),
+  );
+}
+
+function auction_format_price($amount, $currency_code = '') {
+  return number_format($amount / 100, 2, ',', '.') . ' ' . $currency_code;
+}
+
+function auction_form($form, $form_state, $auction) {
+  return array(
+      '#type' => 'markup',
+      '#markup' => t('Auctions can be added only along with their parent node.'),
+  );
+}
+
+/**
+ * Gets the property from auction controller.
+ */
+function auction_entity_get_winning_user($auction, array $options, $name, $type, $info) {
+  return auction_get_controller()->getWinningUserId($auction);
+}
+
+/**
+ * Gets the current price property from auction controller.
+ */
+function auction_entity_get_current_price($auction, array $options, $name, $type, $info) {
+  return auction_get_controller()->getCurrentPrice($auction);
+}

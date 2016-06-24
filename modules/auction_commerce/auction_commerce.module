@@ -1,0 +1,369 @@
+<?php
+
+/**
+ * Aug 7, 2012
+ * @file auction_commerce.module
+ * @author blazey http://drupal.org/user/353861
+ */
+
+define('AUCTION_COMMERCE_INITIAL_ORDER_STATUS', 'checkout_checkout');
+
+/**
+ * Implements hook_cron(). 
+ */
+function auction_commerce_cron() {
+  $current_month = date('m');
+
+  // Only fire once a month, at the beginning.
+  if (variable_get('auction_commerce_last_month', '') != $current_month) {
+    auction_commerce_make_monthly_bills($current_month);
+    
+    // Mark current month as processed.
+    variable_set('auction_commerce_last_month', $current_month);
+  }
+}
+
+/**
+ * Implements hook_cron_queue_info().
+ *
+ * @return array
+ */
+function auction_commerce_cron_queue_info() {
+  $queues = array();
+  $queues['auction_commerce_billing'] = array(
+    'worker callback' => 'auction_commerce_make_monthly_order_for_auction_creator',
+    'time' => '180',
+  );
+  return $queues;
+}
+
+/**
+ * Implements hook_commerce_product_type_info().
+ */
+function auction_commerce_commerce_product_type_info() {
+  return array(
+    'auction_fee' => array(
+      'type' => 'auction_fee',
+      'name' => t('Auction fee'),
+      'description' => t('Stores fees for auction creators.'),
+      'help' => '',
+    ),
+    'auction' => array(
+      'type' => 'auction',
+      'name' => t('Auction'),
+      'description' => t('Stores bought auctions.'),
+      'help' => '',
+    ),
+  );
+}
+
+function auction_commerce_commerce_order_status_info_alter(&$order_statuses) {
+  $order_statuses[AUCTION_COMMERCE_INITIAL_ORDER_STATUS]['cart'] = FALSE;
+}
+
+/**
+ * Implements hook_views_api().
+ *
+ * @return array
+ */
+function auction_commerce_views_api() {
+  return array(
+      'api' => 3,
+      'path' => drupal_get_path('module', 'auction_commerce') . '/includes/views',
+  );
+}
+
+/**
+ * Implements hook_auction_finished().
+ *
+ * @param stdClass $auction 
+ */
+function auction_commerce_auction_finished($auction) {
+  // Make bill for 
+  $controller = auction_get_controller();
+  if ($controller->minimumPriceReached($auction)) {
+    // Auction is sold. Create order for winning user.
+    $order_wrapper = auction_commerce_create_order_for_user(
+            $controller->getWinningUserId($auction), 
+            'auction_bill'
+    );
+
+    // Create product instance representing auction.
+    $product = auction_commerce_make_auction_product($auction);
+    
+    // Add line item representing auction.
+    $auction_line_item = commerce_product_line_item_new($product, 1, $order_wrapper->order_id->value());
+    commerce_line_item_save($auction_line_item);
+    $order_wrapper->commerce_line_items[] = $auction_line_item;
+
+    // Save order.
+    $order_wrapper->save();
+    rules_invoke_all('auction_bill_created', $auction, $order_wrapper->raw());
+  }
+}
+
+/**
+ * Make commerce product of type auction.
+ * 
+ * @param stdClass $auction
+ * @return stdClass
+ */ 
+function auction_commerce_make_auction_product(&$auction) {
+  $controller = auction_get_controller();
+
+  return auction_commerce_make_product(
+    'auction', 
+    $controller->getParentEntityWrapper($auction->auction_id)->title->value(),
+    $auction->uid,
+    'auction_' . $auction->auction_id,
+    $auction->current_price,
+    commerce_default_currency(),
+    $auction->auction_id);
+}
+
+/**
+ * Makes commerce product to represent auction related payments.
+ * 
+ * @param string $type
+ * @param string $title
+ * @param int $uid
+ * @param string $sku
+ * @param int $price
+ * @param string $currency_code
+ * @return stdClass
+ */ 
+function auction_commerce_make_product($type, $title, $uid, $sku, $price, $currency_code, $auction_id = NULL) {
+  $product = commerce_product_new($type);
+  $product_wrapper = entity_metadata_wrapper('commerce_product', $product);
+  $product_wrapper->title = $title;
+  $product_wrapper->uid = $uid;
+  $product_wrapper->sku = $sku;
+  $product_wrapper->commerce_price = array(
+    'amount' => $price,
+    'currency_code' => $currency_code,
+    'data' => array('components' => array()),
+  );
+
+  if ($type == 'auction') {
+    $product_wrapper->field_auction = $auction_id;
+  }
+
+  $product_wrapper->save();
+
+  return $product_wrapper->raw();
+}
+
+/**
+ * Creates an order for given user.
+ *
+ * @param int $uid
+ * @param string $type
+ * @return EntityMetadataWrapper
+ */
+function auction_commerce_create_order_for_user($uid, $type = 'commerce_order') {
+  $order = commerce_order_new($uid, AUCTION_COMMERCE_INITIAL_ORDER_STATUS);
+  $order->type = $type;
+  commerce_order_save($order);
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  
+  return $order_wrapper;
+}
+
+/**
+ * Implements hook_auction_fee_ranges().
+ */
+function auction_commerce_auction_commerce_fee_ranges() {
+  return array(
+    array(
+      'from' => 0,
+      'provision' => 0.03,
+      'single_auction_fee' => 15,
+    ),
+    array(
+      'from' => 10000,
+      'provision' => 0.025,
+      'single_auction_fee' => 50,
+    ),
+    array(
+      'from' => 100000,
+      'provision' => 0.02,
+      'single_auction_fee' => 100,
+    ),
+  );
+}
+
+/**
+ * Return fee ranges for auction creators.
+ */
+function auction_commerce_get_fee_ranges() {
+  $ranges = module_invoke_all('auction_commerce_fee_ranges');
+  drupal_alter('auction_commerce_fee_ranges', $ranges);
+  return $ranges;
+}
+
+/**
+ * Return fee range for given amount.
+ *
+ * @param int $monthly_sell_amount
+ * @return array 
+ */
+function auction_commerce_determine_fee_range($monthly_sell_amount) {
+  $range = array();
+  foreach (auction_commerce_get_fee_ranges() as $value) {
+    if ($monthly_sell_amount < $value['from']) {
+      break;
+    }
+    $range = $value;
+  }
+  return $range;
+}
+
+/**
+ * Creates bills for auctions creators.
+ *
+ * @param int $current_month 
+ */
+function auction_commerce_make_monthly_bills($current_month) {
+  // Determine last month's number and year. Special case is January.
+  $current_year = date('Y');
+  if ($current_month == 1) {
+    $last_month = 12;
+    $last_year = date('Y') - 1;
+  } else {
+    $last_month = $current_month - 1;
+    $last_year = $current_year;
+  }
+
+  // Split auctions finished last month by creator uid.
+  $auctions_by_user = array();
+  foreach (auction_commerce_get_auctions_finished_last_month($current_month, $current_year, $last_month, $last_year) as $auction) {
+    $auctions_by_user[$auction->uid][] = $auction;
+  }
+
+  // Add separate cron queue item for every user so we are sure everything
+  // gets processed.
+  $queue = DrupalQueue::get('auction_commerce_billing');
+  foreach ($auctions_by_user as $uid => $auctions) {
+    $queue->createItem(array(
+      'uid' => $uid,
+      'auctions' => $auctions,
+      'month' => $last_month,
+      'year' => $last_year,
+    ));
+  }
+}
+
+/**
+ * Return auctions that finished last month
+ *
+ * @param int $current_month
+ * @return array
+ */
+function auction_commerce_get_auctions_finished_last_month($current_month, $current_year, $last_month, $last_year) {
+  // Get timestamps to put in query.
+  $from = strtotime("$last_year/$last_month/1 00:00");
+  $to = strtotime("$current_year/$current_month/1 00:00");
+  $query = db_select('auction', 'a')
+        ->fields('a')
+        ->condition('status', AUCTION_STATUS_FINISHED)
+        ->condition('changed', $from, '>=')
+        ->condition('changed', $to, '<');
+  
+  // Select and return auctions.
+  return $query
+        ->execute()
+        ->fetchAllAssoc('auction_id');
+}
+
+/**
+ * Auction commerce billing cron queue callback. Creates monthly bill for a user.
+ *
+ * @param array $data 
+ */
+function auction_commerce_make_monthly_order_for_auction_creator($data) {
+  $uid = $data['uid'];
+  $auctions = $data['auctions'];
+
+  // Create monthly bill order.
+  $order_wrapper = auction_commerce_create_order_for_user($uid, 'auction_monthly_bill');
+  
+  // Calculate needed amounts.
+  $sum = auction_commerce_sum_amounts($auctions);
+  $fee_range = auction_commerce_determine_fee_range($sum / 100);
+  $provision = $sum * $fee_range['provision'];
+
+  // Create product representing provision.
+  $provision_product = auction_commerce_make_product(
+    'auction_fee',
+    t('Monthly provision: @sum * @provision', array('@sum' => $sum / 100, '@provision' => $fee_range['provision'])),
+    $uid,
+    implode('_', array('auction_provision', $uid, $data['year'], $data['month'])),
+    $provision,
+    commerce_default_currency()
+  );
+  // Add line item.
+  $provision_line_item = commerce_product_line_item_new($provision_product, 1, $order_wrapper->order_id->value());
+  commerce_line_item_save($provision_line_item);
+  $order_wrapper->commerce_line_items[] = $provision_line_item;
+  
+  // Create product representing fee for auctions.
+  $quantity = count($auctions);
+  $fee_product = auction_commerce_make_product(
+    'auction_fee',
+    t('Fee for auctions finished @year-@month', array('@year' => $data['year'], '@month' => $data['month'])),
+    $uid,
+    implode('_', array('auction_fee', $uid, $data['year'], $data['month'])),
+    $fee_range['single_auction_fee'] * 100,
+    commerce_default_currency()
+  );
+  // Add line item.
+  $fee_line_item = commerce_product_line_item_new($fee_product, $quantity, $order_wrapper->order_id->value());
+  commerce_line_item_save($fee_line_item);
+  $order_wrapper->commerce_line_items[] = $fee_line_item;
+  
+  $order_wrapper->save();
+}
+
+/**
+ * Populates line item with required data.
+ *
+ * @param stdClass $line_item
+ * @param string $label
+ * @param int $amount
+ * @param int $quantity 
+ */
+function auction_commerce_line_item_populate(&$line_item, $label, $amount, $quantity) {
+  $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+  $line_item_wrapper->line_item_label = $label;
+  $line_item_wrapper->commerce_unit_price = array(
+    'amount' => $amount,
+    'currency_code' => commerce_default_currency(),
+    'data' => array('components' => array()),
+  );
+  
+  // Add the base price to the components array.
+  if (!commerce_price_component_load($line_item_wrapper->commerce_unit_price->value(), 'base_price')) {
+    $line_item_wrapper->commerce_unit_price->data = commerce_price_component_add(
+      $line_item_wrapper->commerce_unit_price->value(),
+      'base_price',
+      $line_item_wrapper->commerce_unit_price->value(),
+      TRUE
+    );
+  }
+  $line_item_wrapper->quantity = $quantity;
+  $line_item_wrapper->save();
+}
+
+/**
+ * Returns sum of auctions amounts.
+ *
+ * @param array $auctions
+ * @return int 
+ */
+function auction_commerce_sum_amounts($auctions) {
+  $sum = 0;
+  foreach ($auctions as $auction) {
+    $sum += $auction->current_price;
+  }
+  return $sum;
+}
