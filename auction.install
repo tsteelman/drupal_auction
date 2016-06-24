@@ -27,12 +27,15 @@ function auction_schema() {
         'not null' => TRUE,
         'default' => '',
       ),
+    	 
       'status' => array(
         'description' => 'Auction status.',
         'type' => 'int',
         'unsigned' => TRUE,
         'not null' => TRUE,
       ),
+    		
+    		
       'current_price' => array(
         'description' => 'Current price.',
         'type' => 'int',
@@ -164,6 +167,99 @@ function auction_install() {
   node_types_rebuild();
   $types = node_type_get_types();
   node_add_body_field($types['auction']);
+  
+  //#### START OF Chapter Creation #####
+  field_create_field(array(
+  		'translatable' => '0',
+  		'entity_types' => array(),
+  		'settings' => array(
+  				'precision' => '20',
+  				'scale' => '2',
+  				'decimal_separator' => '.',
+  		),
+  		'storage' => array(
+  				'type' => 'field_sql_storage',
+  				'settings' => array(),
+  				'module' => 'field_sql_storage',
+  				'active' => '1',
+  				'details' => array(
+  						'sql' => array(
+  								'FIELD_LOAD_CURRENT' => array(
+  										'field_data_field_auction_chapter' => array(
+  												'value' => 'field_auction_chapter',
+  										),
+  								),
+  								'FIELD_LOAD_REVISION' => array(
+  										'field_revision_field_auction_chapter' => array(
+  												'value' => 'field_auction_chapter_value',
+  										),
+  								),
+  						),
+  				),
+  		),
+  		'foreign keys' => array(),
+  		'indexes' => array(),
+  		'field_name' => 'field_auction_chapter',
+  		'type' => 'number_decimal',
+  		'module' => 'number',
+  		'active' => '1',
+  		'locked' => '0',
+  		'cardinality' => '1',
+  		'deleted' => '0',
+  		'columns' => array(
+  				'value' => array(
+  						'type' => 'numeric',
+  						'precision' => '20',
+  						'scale' => '2',
+  						'not null' => FALSE,
+  				),
+  		),
+  		'bundles' => array(
+  				'auction' => array(
+  						'auction',
+  				),
+  		),
+  ));
+  field_create_instance(array(
+  		'label' => 'Chapter',
+  		'widget' => array(
+  				'weight' => '0',
+  				'type' => 'number',
+  				'module' => 'number',
+  				'active' => 0,
+  				'settings' => array(),
+  		),
+  		'settings' => array(
+  				'min' => '1',
+  				'max' => '',
+  				'prefix' => '',
+  				'suffix' => '',
+  				'user_register_form' => FALSE,
+  		),
+  		'display' => array(
+  				'default' => array(
+  						'label' => 'above',
+  						'type' => 'hidden',
+  						'settings' => array(
+  								'thousand_separator' => ' ',
+  								'decimal_separator' => '.',
+  								'scale' => 2,
+  								'prefix_suffix' => TRUE,
+  						),
+  						'module' => 'number',
+  						'weight' => 0,
+  				),
+  		),
+  		'required' => 0,
+  		'description' => 'Enter chapter',
+  		'default_value' => NULL,
+  		'field_name' => 'field_auction_chapter',
+  		'entity_type' => 'auction',
+  		'bundle' => 'auction',
+  		'deleted' => '0',
+  ));
+  //#### END OF Chapter Creation #####
+  
   field_create_field(array(
     'translatable' => '0',
     'entity_types' => array(),
@@ -253,7 +349,10 @@ function auction_install() {
     'bundle' => 'auction',
     'deleted' => '0',
   ));
+  
 
+  
+  
   field_create_field(array(
     'translatable' => '0',
     'entity_types' => array(),
@@ -343,6 +442,8 @@ function auction_install() {
     'bundle' => 'auction',
     'deleted' => '0',
   ));
+  
+  
   field_create_field(array(
     'translatable' => '0',
     'entity_types' => array(),
@@ -432,7 +533,8 @@ function auction_install() {
     'bundle' => 'auction',
     'deleted' => '0',
   ));
-
+  
+  
   field_create_field(array(
     'translatable' => '0',
     'entity_types' => array(),
@@ -794,6 +896,7 @@ function auction_uninstall() {
     'field_auction_bid_step',
     'field_auction_buy_now_price',
     'field_auction_date',
+  	'field_auction_chapter',
   );
   foreach ($fields as $fieldname) {
     field_delete_instance(field_info_instance('auction', $fieldname, 'auction'));
